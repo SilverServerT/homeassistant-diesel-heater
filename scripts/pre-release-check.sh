@@ -82,7 +82,7 @@ served = Version('$PYPI_VER')
 if served < pin:
     print(f'ERROR: PyPI serves diesel-heater-ble $PYPI_VER but manifest requires >={pin}')
     print('       Publish the new library to PyPI BEFORE releasing the integration')
-    print('       (see memory/pypi-publishing.md).')
+    print('       (see docs/pypi-publishing.md).')
     raise SystemExit(1)
 print(f'    pin={pin} <= PyPI={served} - OK')
 "
@@ -139,7 +139,7 @@ if missing:
     print("    This is the beta.3/beta.4 class of bug: the integration imports a")
     print("    symbol that doesn't exist in the version of diesel-heater-ble on")
     print("    PyPI. Either downgrade the import, bump the manifest pin, or publish")
-    print("    the new library version first (see memory/pypi-publishing.md).")
+    print("    the new library version first (see docs/pypi-publishing.md).")
     sys.exit(1)
 
 print("    all integration imports resolve against the pinned PyPI package - OK")
