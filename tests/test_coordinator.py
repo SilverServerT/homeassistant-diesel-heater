@@ -78,6 +78,15 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
         side_effect=lambda coro, name=None, eager_start=True: asyncio.create_task(coro)
     )
 
+    def create_task(coro, name=None, eager_start=False):
+        """Schedule in async tests and close intentionally skipped sync work."""
+        try:
+            return asyncio.get_running_loop().create_task(coro, name=name)
+        except RuntimeError:
+            coro.close()
+            return MagicMock()
+
+    hass.async_create_task = MagicMock(side_effect=create_task)
     entry = MagicMock()
     entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
     entry.options = {}
@@ -240,6 +249,7 @@ class TestAA66TemperatureUnitOverride:
         coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
 
         assert coordinator._protocols[4]._temperature_unit_override == 0
+        assert coordinator._time_synced_this_session is False
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +829,29 @@ class TestNotificationCallback:
         await coordinator._wait_for_v21_handshake()
         assert coordinator._v21_handshake_authenticated is True
 
+    @pytest.mark.asyncio
+    async def test_non_feaa_initial_status_does_not_auto_sync_time(self):
+        """Only CBFF performs an automatic post-connect time sync."""
+        coordinator = create_mock_coordinator()
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._protocol_mode = 1
+        coordinator._protocol = coordinator._protocols[1]
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_sync_time = AsyncMock()
+
+        await coordinator._async_update_data()
+
+        coordinator.async_sync_time.assert_not_awaited()
     @pytest.mark.asyncio
     async def test_feaa_initial_status_does_not_auto_sync_time(self):
         """FEAA must not receive AA55-style automatic command 10."""
@@ -1617,6 +1650,19 @@ class TestAsyncCommands:
         await coordinator.async_set_auto_start_stop(True)
 
         coordinator._send_command.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_async_set_auto_start_stop_skips_unsupported_cbff(self):
+        """CBFF capability markers must prevent a no-op settings command."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._protocol = coordinator._protocols[6]
+        coordinator._protocol._settings_payload = bytes((*([0] * 12), 255))
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_auto_start_stop(True)
+
+        coordinator._send_command.assert_not_awaited()
+
 
     @pytest.mark.asyncio
     async def test_async_sync_time(self):
@@ -2850,7 +2896,11 @@ class TestExternalTempCallback:
         coordinator = create_mock_coordinator()
         coordinator._async_calculate_auto_offset = AsyncMock()
         mock_task = MagicMock()
-        coordinator.hass.async_create_task = MagicMock(return_value=mock_task)
+        def close_task(coro):
+            coro.close()
+            return mock_task
+
+        coordinator.hass.async_create_task = MagicMock(side_effect=close_task)
 
         event = MagicMock()
         coordinator._async_external_temp_changed(event)

@@ -217,6 +217,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_event = asyncio.Event()
         self._v21_handshake_authenticated: bool | None = None
         self._feaa_command_lock = asyncio.Lock()
+        self._time_synced_this_session = False
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
@@ -1540,16 +1541,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # the AA55-style command 10 time sync.
                 if (
                     connected_this_update
+                    and self._protocol_mode == 6
                     and not self._time_synced_this_session
-                    and not getattr(self, "_is_cronus_device", False)
                 ):
                     self._time_synced_this_session = True
                     try:
                         self._logger.debug("Auto-syncing time after initial status...")
-                        if self._protocol_mode == 6:
-                            await self._send_v21_time_sync(dt_util.now())
-                        else:
-                            await self.async_sync_time()
+                        await self._send_v21_time_sync(dt_util.now())
                         self._logger.info("Auto time sync completed")
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
@@ -3367,6 +3365,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         when it drops 2°C below the target.
         """
         self._logger.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
+        if (
+            self._protocol_mode == 6
+            and isinstance(self._protocol, ProtocolCBFF)
+            and not self._protocol.supports_auto_start_stop
+        ):
+            self._logger.warning("FEAA auto start/stop is not supported by this controller")
+            return
+
         # Command 18, arg=1 for enabled, arg=0 for disabled
         success = await self._send_command(18, 1 if enabled else 0)
         if success:
