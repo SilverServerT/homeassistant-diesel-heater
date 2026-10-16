@@ -1,5 +1,6 @@
 """Focused tests for the experimentally supported Sunster Neo transport."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -151,9 +152,16 @@ async def test_unsupported_neo_command_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_configuration_read_matches_apk_password_sequence() -> None:
+async def test_configuration_read_matches_apk_password_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._neo_password = 12345678
+    monkeypatch.setattr(
+        coordinator_module.dt_util,
+        "now",
+        lambda: datetime(2026, 10, 16, 12, 34, 56, tzinfo=timezone(timedelta(hours=-2, minutes=-30))),
+    )
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
             FFF2, neo_config_response()
@@ -162,8 +170,7 @@ async def test_configuration_read_matches_apk_password_sequence() -> None:
 
     assert await coordinator._send_dz06_neo_configuration() is True
     packet = coordinator._write_gatt.await_args.args[0]
-    assert packet[:4] == bytearray.fromhex("290d5c00")
-    assert packet[8:12] == bytearray.fromhex("00bc614e")
+    assert packet == bytearray.fromhex("290d5c006ad219f000bc614e01f8f4")
     assert coordinator.data["neo_min_target"] == 8
     assert coordinator.data["neo_max_target"] == 36
     assert coordinator._neo_config_received is True
@@ -466,6 +473,8 @@ def test_neo_burnoff_snapshot_captures_the_configured_upper_limit() -> None:
     )
 
     assert coordinator.burnoff_protocol_snapshot()["neo_max_target"] == 35
+
+
 def test_5a25_maps_apk_standby_and_wind_states() -> None:
     coordinator = coordinator_for_layout(True)
     standby = bytearray(39)
